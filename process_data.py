@@ -1,111 +1,95 @@
+# -*- coding: utf-8 -*-
 import pandas as pd
-import numpy as np
-from tsfresh import extract_features
-from tsfresh.utilities.dataframe_functions import roll_time_series
-from sklearn.preprocessing import LabelEncoder
+import matplotlib.pyplot as plt
 
-# --------------------------
-# 1. Cargar y Fusionar Datos
-# --------------------------
-def load_and_merge_data(temp_path, imu_path):
-    # Cargar datos
-    df_temp = pd.read_csv(temp_path, sep=";", parse_dates=["Time (UTC)"])
-    df_imu = pd.read_csv(imu_path, sep=";", parse_dates=["Time (UTC)"])
+def cargar_y_fusionar(temp_path, imu_path):
+    # Cargar y fusionar datos usando epoch timestamp
+    df_temp = pd.read_csv(temp_path, sep=";")
+    df_imu = pd.read_csv(imu_path, sep=";")
 
-    # Renombrar columnas para claridad
-    df_temp = df_temp.rename(columns={"Time (UTC)": "timestamp"})
-    df_imu = df_imu.rename(columns={"Time (UTC)": "timestamp"})
+    # Convertir a enteros
+    df_temp['Epoch timestamp (UTC)'] = df_temp['Epoch timestamp (UTC)'].astype(int)
+    df_imu['Epoch timestamp (UTC)'] = df_imu['Epoch timestamp (UTC)'].astype(int)
 
-    # Eliminar columna redundante y convertir timestamp
-    df_temp = df_temp.drop("Submerged temperature (ÂºC)", axis=1)
-    df_temp["timestamp"] = pd.to_datetime(df_temp["timestamp"])
-    df_imu["timestamp"] = pd.to_datetime(df_imu["timestamp"])
-
-    # Fusionar usando el timestamp más cercano
-    df_merged = pd.merge_asof(
-        df_imu.sort_values("timestamp"),
-        df_temp.sort_values("timestamp"),
-        on="timestamp",
-        direction="nearest"
+    # Fusion exacta
+    df = pd.merge(
+        df_imu,
+        df_temp,
+        on='Epoch timestamp (UTC)',
+        how='left',
+        suffixes=('_IMU', '_TEMP')
     )
-    return df_merged
+    
+    # Crear timestamp a partir del epoch
+    df['timestamp'] = pd.to_datetime(df['Epoch timestamp (UTC)'], unit='s', utc=True).dt.tz_convert(None)
+    
+    return df[['timestamp', 'Epoch timestamp (UTC)'] + 
+             [c for c in df.columns if c not in ['timestamp', 'Epoch timestamp (UTC)', 'Source_IMU', 'Source_TEMP']]]
 
-# --------------------------
-# 2. Crear Ventanas Temporales
-# --------------------------
-def create_time_windows(df, window_minutes=10):
-    # Crear ID de ventana cada X minutos
-    df["ventana_id"] = df["timestamp"].astype("int64") // (1e9 * 60 * window_minutes)
+def crear_ventanas(df, window_minutes=10):
+    # Crear ventanas temporales
+    df['ventana_id'] = (df['timestamp'] - df['timestamp'].min()).dt.total_seconds() // (60 * window_minutes)
     return df
 
-# --------------------------
-# 3. Extraer Características
-# --------------------------
-def extract_window_features(df):
-    features = extract_features(
-        df,
-        column_id="ventana_id",
-        column_sort="timestamp",
-        default_fc_parameters={
-            "mean": None,
-            "standard_deviation": None,
-            "maximum": None,
-            "minimum": None,
-            "linear_trend": [{"attr": "slope"}],
-            "abs_energy": None
-        },
-        # Extraer características específicas por sensor:
-        kind_to_fc_parameters={
-            "Surface temperature (ÂºC)": {"linear_trend": [{"attr": "slope"}]},
-            "Accel Y (G)": {"standard_deviation": None},
-            "Gyro Z (rad/s)": {"maximum": None}
-        }
-    )
-    return features.dropna(axis=1)  # Eliminar columnas con NaN
+def graficar_datos(df):
+    # Configurar gráfico interactivo
+    fig, ax1 = plt.subplots(figsize=(14, 8))
 
-# --------------------------
-# 4. Etiquetado Automático
-# --------------------------
-def label_data(features):
-    # Reglas de etiquetado (¡Ajustar umbrales según dominio!)
-    conditions = [
-        (features["Surface temperature (ÂºC)__linear_trend__slope"] > 0.05) &
-        (features["Accel Y (G)__standard_deviation"] > 0.1),
-        
-        (features["Surface temperature (ÂºC)__linear_trend__slope"].abs() < 0.02) &
-        (features["Accel Y (G)__standard_deviation"] < 0.05)
-    ]
-    choices = ["MILKING", "MAINTENANCE"]
-    
-    features["estado"] = np.select(conditions, choices, default="DESCONOCIDO")
-    return features
+    # Seleccionar columnas a graficar
+    columnas_izq = ['Accel X (G)']  # Se mostrará en el eje principal (ax1)
+    columnas_der = [
+        'Surface temperature (ºC)',
+        # 'Submerged temperature (ºC)',
+        'Over surface temperature (ºC)'
+    ]  # Se mostrará en el eje secundario (ax2)
 
-# --------------------------
-# Ejecución Principal
-# --------------------------
+    # Graficar las series del eje izquierdo
+    for col in columnas_izq:
+        if col in df.columns:
+            ax1.plot(df['timestamp'], df[col], marker='o', linestyle='-', markersize=4, label=col, color='tab:blue')
+
+    # Crear segundo eje Y
+    ax2 = ax1.twinx()
+
+    # Graficar las series del eje derecho
+    for col in columnas_der:
+        if col in df.columns:
+            ax2.plot(df['timestamp'], df[col], marker='s', linestyle='-', markersize=4, label=col, alpha=0.7)
+
+    # Personalizar ejes
+    ax1.set_xlabel('Timestamp')
+    ax1.set_ylabel('Accel X (G)', color='tab:blue')
+    ax2.set_ylabel('Temperatura (ºC)', color='tab:red')
+
+    # Configurar leyendas
+    ax1.legend(loc='upper left')
+    ax2.legend(loc='upper right')
+
+    # Personalizar gráfico
+    plt.title('Series Temporales de Sensores')
+    plt.grid(True)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    # Mostrar gráfico
+    plt.show()
+
 if __name__ == "__main__":
-    # Parámetros configurables
-    TEMP_PATH = "test_tank_temperature_probes_data.csv"
-    IMU_PATH = "test_6_DoF_IMU_data.csv"
-    WINDOW_MINUTES = 10  # Tamaño de ventana en minutos
-
-    # Paso 1: Cargar y fusionar datos
-    df_merged = load_and_merge_data(TEMP_PATH, IMU_PATH)
+    # Procesamiento
+    IMU_DATA = "6_DoF_IMU/6_DoF_IMU_data.30_09_2024.csv"
+    TEMP_DATA = "tank_temperature_probes/tank_temperature_probes_data.30_09_2024.csv"
     
-    # Paso 2: Crear ventanas temporales
-    df_windowed = create_time_windows(df_merged, WINDOW_MINUTES)
+    datos = cargar_y_fusionar(
+        "test_tank_temperature_probes_data.csv",
+        "test_6_DoF_IMU_data.csv"
+    )
+    datos_con_ventanas = crear_ventanas(datos)
     
-    # Paso 3: Extraer características
-    features = extract_window_features(df_windowed)
+    # Guardar CSV
+    datos_con_ventanas.to_csv("datos_fusionados.csv", index=False)
     
-    # Paso 4: Etiquetar automáticamente
-    labeled_data = label_data(features)
+    # Generar gráfico interactivo
+    graficar_datos(datos_con_ventanas)
     
-    # Guardar datos preprocesados
-    labeled_data.to_csv("labeled_data.csv", index=False)
-    print("Datos etiquetados guardados en 'labeled_data.csv'")
-
-    # Opcional: Codificar etiquetas para modelos
-    le = LabelEncoder()
-    labeled_data["estado_encoded"] = le.fit_transform(labeled_data["estado"])
-    print("\nEjemplo de etiquetas:", dict(zip(le.classes_, le.transform(le.classes_))))
+    print("Proceso completado!")
+    print("Archivo generado: datos_fusionados_final.csv")
