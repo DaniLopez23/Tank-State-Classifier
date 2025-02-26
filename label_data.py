@@ -11,6 +11,7 @@ TEMPERATURE_THRESHOLDS = {
     'maintenance_surface': (3, 5),
     'maintenance_over': (5, 6.5)
 }
+
 PATH_FILE = 'merged_data.csv'
 STATE_COLORS = {
     'CLEANING': 'red',
@@ -32,19 +33,31 @@ def safe_nanmax(arr):
     with np.errstate(all='ignore'):
         return np.nanmax(arr) if not np.all(np.isnan(arr)) else np.nan
 
-def calculate_trend(series):
+def calculate_trend(series, timestamps):
     """Calculate temperature trend using linear regression."""
+    
+    # Asegúrate de que el índice de la serie sea un datetime
+    if len(series) != len(timestamps):
+        raise ValueError("La longitud de la serie y los timestamps debe ser igual.")
+    
+    # Eliminar valores nulos
     temp_data = series.dropna()
     
-    if len(temp_data) > 1:
+    # Asegúrate de que los timestamps se conviertan en segundos desde la época
+    valid_timestamps = timestamps[~series.isna()]  # Filtrar timestamps donde hay datos
+    if len(valid_timestamps) > 1:
         try:
-            # Convert timestamp index to seconds since epoch
-            times = temp_data.index.view('int64') // 10**9
-            slope, _, _, _, _ = linregress(times, temp_data)
+            # Convertir timestamps a segundos desde la época
+            times = pd.to_datetime(valid_timestamps).view('int64') // 10**9
+            # Calcular la pendiente utilizando regresión lineal
+            slope, _, _, _, _ = linregress(times, temp_data.loc[~series.isna()])
             return slope
-        except Exception:
+        except Exception as e:
+            print(f"Error al calcular la tendencia de la temperatura: {e}")
             return 0
-    return 0
+    else:
+        print("No hay suficientes datos para calcular la tendencia.")
+        return 0
 
 def classify_window(group):
     """Determine the classification state for a group (window) of data."""
@@ -52,29 +65,45 @@ def classify_window(group):
         'ventana_id': group['ventana_id'].iloc[0],
         'surface_temp_mean': safe_nanmean(group['Surface temperature (ºC)']),
         'over_temp_mean': safe_nanmean(group['Over surface temperature (ºC)']),
-        'surface_temp_slope': calculate_trend(group['Surface temperature (ºC)']),
+        'surface_temp_slope': calculate_trend(group['Surface temperature (ºC)'], group['timestamp']),
         'gyro_active': any(safe_nanmax(np.abs(group[col])) > 0.001 
                            for col in ['Gyro X (rad/s)', 'Gyro Y (rad/s)', 'Gyro Z (rad/s)']),
         'accel_x_mean': safe_nanmean(group['Accel X (G)'])
     }
     
+    print(f"Ventana {features['ventana_id']}: {features}")
+    
+    
     if safe_nanmax(group['Surface temperature (ºC)']) >= TEMPERATURE_THRESHOLDS['cleaning']:
         return 'CLEANING'
-    if np.abs(features['accel_x_mean']) < 0.2 and not features['gyro_active']:
-        return 'EMPTY'
-    if (TEMPERATURE_THRESHOLDS['inactive'][0] <= features['surface_temp_mean'] <= TEMPERATURE_THRESHOLDS['inactive'][1] and
-        TEMPERATURE_THRESHOLDS['inactive'][0] <= features['over_temp_mean'] <= TEMPERATURE_THRESHOLDS['inactive'][1] and
-        not features['gyro_active']):
-        return 'INACTIVE'
-    if features['surface_temp_slope'] > 0.005 and features['gyro_active']:
-        # Considerar también la temperatura de la superficie y la aceleración
-        if features['surface_temp_mean'] < TEMPERATURE_THRESHOLDS['milking_max']:
+    # if np.abs(features['accel_x_mean']) < 0.2 and not features['gyro_active']:
+    #     return 'EMPTY'
+    
+    # if (TEMPERATURE_THRESHOLDS['inactive'][0] <= features['surface_temp_mean'] <= TEMPERATURE_THRESHOLDS['inactive'][1] and
+    #     TEMPERATURE_THRESHOLDS['inactive'][0] <= features['over_temp_mean'] <= TEMPERATURE_THRESHOLDS['inactive'][1] and
+    #     not features['gyro_active']):
+    #     return 'INACTIVE'
+    
+    # if features['surface_temp_slope'] > 0.005 and features['gyro_active']:
+    #     # Considerar también la temperatura de la superficie y la aceleración
+    #     if features['surface_temp_mean'] < TEMPERATURE_THRESHOLDS['milking_max']:
+    #         return 'MILKING'
+    
+    if features['surface_temp_slope'] > 0:
             return 'MILKING'
-    if features['surface_temp_slope'] < -0.005 and features['gyro_active']:
+        
+    # if features['surface_temp_slope'] < -0.005 and features['gyro_active']:
+    #     return 'POST-MILKING'
+    if features['surface_temp_slope'] < 0:
         return 'POST-MILKING'
+    
+    # if (TEMPERATURE_THRESHOLDS['maintenance_surface'][0] <= features['surface_temp_mean'] <= TEMPERATURE_THRESHOLDS['maintenance_surface'][1] and
+    #     TEMPERATURE_THRESHOLDS['maintenance_over'][0] <= features['over_temp_mean'] <= TEMPERATURE_THRESHOLDS['maintenance_over'][1] and
+    #     features['gyro_active']):
+    #     return 'MAINTENANCE'
+    
     if (TEMPERATURE_THRESHOLDS['maintenance_surface'][0] <= features['surface_temp_mean'] <= TEMPERATURE_THRESHOLDS['maintenance_surface'][1] and
-        TEMPERATURE_THRESHOLDS['maintenance_over'][0] <= features['over_temp_mean'] <= TEMPERATURE_THRESHOLDS['maintenance_over'][1] and
-        features['gyro_active']):
+        TEMPERATURE_THRESHOLDS['maintenance_over'][0] <= features['over_temp_mean'] <= TEMPERATURE_THRESHOLDS['maintenance_over'][1]):
         return 'MAINTENANCE'
     return 'UNKNOWN'
 
@@ -96,8 +125,8 @@ def classify_rows(df):
     return df
 
 def graficar_datos(df):
-    """Genera un gráfico que muestra datos IMU y temperaturas en un mismo gráfico, 
-    con las ventanas coloreadas según su clasificación."""
+    """Genera un gráfico que muestra datos IMU y temperaturas en un mismo gráfico,
+    con las ventanas coloreadas según su clasificación y líneas de tendencia para cada ventana."""
     fig, ax1 = plt.subplots(figsize=(14, 8))
     
     # Obtener fecha única para el título (suponiendo un solo día en los datos)
@@ -142,6 +171,8 @@ def graficar_datos(df):
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
     ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+
+    
     
     plt.title(f'Datos IMU y Temperatura - {fecha_unica}')
     plt.tight_layout()

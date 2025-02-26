@@ -46,6 +46,12 @@ def fusionar_datos(df_imu, df_temp):
     # Convertir el timestamp a datetime sin zona horaria
     df['timestamp'] = pd.to_datetime(df['Epoch timestamp (UTC)'], unit='s', utc=True).dt.tz_convert(None)
 
+    # Rellenar valores NaN con el valor anterior, dejando NaN en la primera fila si no hay datos
+    columns_to_fill = ['Accel X (G)', 'Accel Y (G)', 'Accel Z (G)', 'Gyro X (rad/s)', 'Gyro Y (rad/s)', 'Gyro Z (rad/s)', 
+                        'Surface temperature (ºC)', 'Over surface temperature (ºC)']
+    
+    df[columns_to_fill] = df[columns_to_fill].fillna(method='ffill')
+
     return df[['timestamp', 'Epoch timestamp (UTC)'] + [c for c in df.columns if c not in ['timestamp', 'Epoch timestamp (UTC)']]]
 
 
@@ -111,8 +117,8 @@ def graficar_datos(df):
 
 
 if __name__ == "__main__":
-    IMU_DATA = "6_DoF_IMU/6_DoF_IMU_data.25_08_2024.csv"
-    TEMP_DATA = "tank_temperature_probes/tank_temperature_probes_data.25_08_2024.csv"
+    IMU_DATA = "6_DoF_IMU/6_DoF_IMU_data.24_08_2024.csv"
+    TEMP_DATA = "tank_temperature_probes/tank_temperature_probes_data.24_08_2024.csv"
 
     # Columnas requeridas en cada archivo
     required_columns_imu = ['Epoch timestamp (UTC)', 'Gyro X (rad/s)']
