@@ -3,3 +3,5 @@ initial_data/*
 temp_data/*
 merged_data/*
 labeled_data/*
+*.pkl
+*.png

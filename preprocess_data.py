@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import classification_report, ConfusionMatrixDisplay
 from sktime.classification.kernel_based import RocketClassifier
-from sktime.split import TemporalTrainTestSplit
+from sklearn.model_selection import train_test_split
 
 FILE_DATE = "2024-08-24"
 
@@ -31,8 +31,12 @@ df = df.sort_values("DateTime")
 print("\nValores únicos antes de limpieza:")
 print(df.nunique())
 
-df["Submerged temperature (ºC)"] = df["Submerged temperature (ºC)"].replace(-127.0, np.nan)
-df = df.ffill().bfill()  # Rellenar NaN
+# df["Submerged temperature (ºC)"] = df["Submerged temperature (ºC)"].replace(-127.0, np.nan)
+# df = df.ffill().bfill()  # Rellenar NaN
+
+# Verificar si hay valores NaN
+print("\nValores NaN después de la limpieza:")
+print(df.isna().sum())
 
 # Codificar etiquetas
 label_encoder = LabelEncoder()
@@ -51,6 +55,9 @@ for i in range(n_muestras):
     end = start + CONFIG["window_size"]
     
     ventana = df[sensores].iloc[start:end]
+    if ventana.isna().any().any():
+        print(f"Ventana {i} tiene valores NaN")
+    
     X[i] = ventana.values.T
     
     etiqueta = df["ETIQUETA"].iloc[start:end].mode()[0]
@@ -63,10 +70,18 @@ y = np.array(y)
 valid_windows = ~np.isnan(X).any(axis=(1,2))
 X, y = X[valid_windows], y[valid_windows]
 
-# %% 4. Entrenamiento del modelo
+# Verificar el número de ventanas válidas
+print(f"Total de ventanas: {n_muestras}")
+print(f"Ventanas válidas: {np.sum(valid_windows)}")
+
+# Asegurarse de que hay ventanas válidas
+if len(X) == 0:
+    raise ValueError("No hay ventanas válidas después del filtrado.")
+
 # Split temporal
-splitter = TemporalTrainTestSplit(test_size=CONFIG["test_size"])
-X_train, X_test, y_train, y_test = splitter.split(X, y)
+split_index = int(len(X) * (1 - CONFIG["test_size"]))
+X_train, X_test = X[:split_index], X[split_index:]
+y_train, y_test = y[:split_index], y[split_index:]
 
 # Inicializar y entrenar modelo
 model = RocketClassifier(
@@ -78,21 +93,26 @@ model.fit(X_train, y_train)
 
 # Evaluación
 y_pred = model.predict(X_test)
+
+# Obtener las clases presentes en los datos de prueba y predicción
+present_classes = np.unique(np.concatenate((y_test, y_pred)))
+
 report = classification_report(
     label_encoder.inverse_transform(y_test),
     label_encoder.inverse_transform(y_pred),
-    target_names=label_encoder.classes_
+    target_names=label_encoder.classes_,
+    labels=label_encoder.inverse_transform(present_classes)
 )
 print("\nClassification Report:")
 print(report)
 
-# %% 5. Visualización y guardado
-# Matriz de confusión
+# Visualización y guardado
 fig, ax = plt.subplots(figsize=(12, 10))
 ConfusionMatrixDisplay.from_predictions(
     label_encoder.inverse_transform(y_test),
     label_encoder.inverse_transform(y_pred),
-    display_labels=label_encoder.classes_,
+    display_labels=label_encoder.inverse_transform(present_classes),
+    labels=label_encoder.inverse_transform(present_classes),
     ax=ax,
     cmap="Blues",
     xticks_rotation=45,
