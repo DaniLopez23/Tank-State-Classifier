@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-DATE = "2024-08-24"
+DATE = "2024-08-27"
 
 # Definir rutas de los archivos
 TEMP_FILE = f"temp_data/temp_data_{DATE}.csv"
@@ -44,6 +44,8 @@ def merge_data(temp_file, imu_file, output_file):
     
     # Eliminar las columnas '_time_x' y '_time_y' generadas por el merge
     merged_df = merged_df.drop(columns=["_time_x", "_time_y"], errors="ignore")
+    
+    merged_df = merged_df.drop(columns="Submerged temperature (ºC)", errors="ignore")
     
     # Guardar el resultado en un archivo CSV
     merged_df.to_csv(output_file, index=False)

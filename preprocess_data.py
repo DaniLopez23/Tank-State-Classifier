@@ -4,17 +4,26 @@ import joblib
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import classification_report, ConfusionMatrixDisplay
-from sktime.classification.kernel_based import RocketClassifier
+from sktime.transformations.panel.rocket import Rocket
+import lightgbm as lgbm
 from sklearn.model_selection import train_test_split
-
-FILE_DATE = "2024-08-24"
+from sklearn.pipeline import make_pipeline
+from sklearn.utils.class_weight import compute_class_weight
 
 CONFIG = {
-    "data_path": f"labeled_data/labeled_data_{FILE_DATE}.csv",
-    "window_size": 60,  # 1 minuto = 60 muestras (1 muestra/segundo)
-    "test_size": 0.2,  # 20% para test
-    "num_kernels": 10000,  # Aumentar para mejor precisión (requiere más RAM)
+    "train_files": [
+        "labeled_data/labeled_data_2024-08-23.csv",
+        "labeled_data/labeled_data_2024-08-24.csv",
+        "labeled_data/labeled_data_2024-08-25.csv"
+        ],  # Puedes agregar más archivos
+    "test_files": [
+        "labeled_data/labeled_data_2024-08-26.csv",
+        "labeled_data/labeled_data_2024-08-27.csv"
+        ],
+    "window_size": 1200,  # 20 minutos (1200 segundos si es 1 Hz)
+    "num_kernels": 500,
     "random_state": 42,
+    "invalid_value": -127.0,
     "output": {
         "model_path": "tank_state_model.pkl",
         "encoder_path": "label_encoder.pkl",
@@ -22,109 +31,124 @@ CONFIG = {
     }
 }
 
-# Cargar datos
-df = pd.read_csv(CONFIG["data_path"])
-df["DateTime"] = pd.to_datetime(df["DateTime"])
-df = df.sort_values("DateTime")
+def load_and_preprocess(files):
+    """ Cargar y procesar múltiples archivos en un solo DataFrame """
+    df_list = []
+    for file in files:
+        df = pd.read_csv(file)
+        df["DateTime"] = pd.to_datetime(df["DateTime"])
+        df_list.append(df)
+    df = pd.concat(df_list, ignore_index=True)
+    
+    # Ordenar por tiempo y manejar valores inválidos
+    df = df.sort_values("DateTime")
+    sensores = ["AccelX", "Over surface temperature (ºC)", "Surface temperature (ºC)"]
+    for sensor in sensores:
+        df[sensor] = df[sensor].replace(CONFIG["invalid_value"], np.nan)
+    df = df.ffill().bfill()
+    
+    return df
 
-# Manejar valores inválidos
-print("\nValores únicos antes de limpieza:")
-print(df.nunique())
-
-# df["Submerged temperature (ºC)"] = df["Submerged temperature (ºC)"].replace(-127.0, np.nan)
-# df = df.ffill().bfill()  # Rellenar NaN
-
-# Verificar si hay valores NaN
-print("\nValores NaN después de la limpieza:")
-print(df.isna().sum())
+df_train = load_and_preprocess(CONFIG["train_files"])
+df_test = load_and_preprocess(CONFIG["test_files"])
 
 # Codificar etiquetas
 label_encoder = LabelEncoder()
-df["ETIQUETA"] = label_encoder.fit_transform(df["ETIQUETA"])
+df_train["ETIQUETA"] = label_encoder.fit_transform(df_train["ETIQUETA"].astype(str))
+df_test["ETIQUETA"] = label_encoder.transform(df_test["ETIQUETA"].astype(str))
 
-# Crear ventanas temporales
-n_muestras = len(df) // CONFIG["window_size"]
-sensores = ["AccelX", "Over surface temperature (ºC)", 
-           "Submerged temperature (ºC)", "Surface temperature (ºC)"]
-
-X = np.zeros((n_muestras, len(sensores), CONFIG["window_size"]))
-y = []
-
-for i in range(n_muestras):
-    start = i * CONFIG["window_size"]
-    end = start + CONFIG["window_size"]
+def create_windows(df, sensores, window_size):
+    X, y = [], []
+    timestamps = df["DateTime"].values
     
-    ventana = df[sensores].iloc[start:end]
-    if ventana.isna().any().any():
-        print(f"Ventana {i} tiene valores NaN")
+    for i in range(0, len(df) - window_size, window_size):
+        ventana = df.iloc[i:i + window_size]
+        
+        if len(ventana) < window_size:
+            continue
+        
+        ventana_valores = ventana[sensores].values.T
+        ventana_norm = (ventana_valores - np.mean(ventana_valores, axis=1, keepdims=True)) / (np.std(ventana_valores, axis=1, keepdims=True) + 1e-8)
+        
+        X.append(ventana_norm.astype(np.float32))
+        y.append(ventana["ETIQUETA"].mode()[0])  # Tomar la etiqueta más frecuente en la ventana
     
-    X[i] = ventana.values.T
-    
-    etiqueta = df["ETIQUETA"].iloc[start:end].mode()[0]
-    y.append(etiqueta)
+    return np.array(X), np.array(y)
 
-X = X.astype("float32")
-y = np.array(y)
+sensores = ["AccelX", "Over surface temperature (ºC)", "Surface temperature (ºC)"]
 
-# Filtrar ventanas incompletas
-valid_windows = ~np.isnan(X).any(axis=(1,2))
-X, y = X[valid_windows], y[valid_windows]
+X_train, y_train = create_windows(df_train, sensores, CONFIG["window_size"])
+X_test, y_test = create_windows(df_test, sensores, CONFIG["window_size"])
 
-# Verificar el número de ventanas válidas
-print(f"Total de ventanas: {n_muestras}")
-print(f"Ventanas válidas: {np.sum(valid_windows)}")
+# Balanceo de clases
+class_weights = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
+weights_dict = {i: weight for i, weight in enumerate(class_weights)}
 
-# Asegurarse de que hay ventanas válidas
-if len(X) == 0:
-    raise ValueError("No hay ventanas válidas después del filtrado.")
-
-# Split temporal
-split_index = int(len(X) * (1 - CONFIG["test_size"]))
-X_train, X_test = X[:split_index], X[split_index:]
-y_train, y_test = y[:split_index], y[split_index:]
-
-# Inicializar y entrenar modelo
-model = RocketClassifier(
-    num_kernels=CONFIG["num_kernels"],
-    random_state=CONFIG["random_state"],
-    n_jobs=-1
+# Modelo
+model = make_pipeline(
+    Rocket(num_kernels=CONFIG["num_kernels"], random_state=CONFIG["random_state"]),
+    lgbm.LGBMClassifier(
+        num_leaves=31,
+        max_depth=5,
+        learning_rate=0.05,
+        n_estimators=100,
+        class_weight=weights_dict,
+        reg_alpha=0.1,
+        reg_lambda=0.1,
+        random_state=CONFIG["random_state"]
+    )
 )
+
+print ("X_train shape: ", X_train.shape)
+print ("y_train shape: ", y_train.shape)
+print ("X_test shape: ", X_test.shape)
+print ("y_test shape: ", y_test.shape)
+
+# Entrenamiento
 model.fit(X_train, y_train)
 
 # Evaluación
-y_pred = model.predict(X_test)
+y_pred_train = model.predict(X_train)
+y_pred_test = model.predict(X_test)
 
-# Obtener las clases presentes en los datos de prueba y predicción
-present_classes = np.unique(np.concatenate((y_test, y_pred)))
+# Reportes de clasificación
+print("\nResultados en TRAIN:")
+print(classification_report(label_encoder.inverse_transform(y_train), label_encoder.inverse_transform(y_pred_train), zero_division=0))
 
-report = classification_report(
-    label_encoder.inverse_transform(y_test),
-    label_encoder.inverse_transform(y_pred),
-    target_names=label_encoder.classes_,
-    labels=label_encoder.inverse_transform(present_classes)
-)
-print("\nClassification Report:")
-print(report)
+print("\nResultados en TEST:")
+print(classification_report(label_encoder.inverse_transform(y_test), label_encoder.inverse_transform(y_pred_test), zero_division=0))
 
-# Visualización y guardado
-fig, ax = plt.subplots(figsize=(12, 10))
+# Gráfica de la matriz de confusión
+fig, ax = plt.subplots(1, 2, figsize=(14, 6))
+
 ConfusionMatrixDisplay.from_predictions(
-    label_encoder.inverse_transform(y_test),
-    label_encoder.inverse_transform(y_pred),
-    display_labels=label_encoder.inverse_transform(present_classes),
-    labels=label_encoder.inverse_transform(present_classes),
-    ax=ax,
+    label_encoder.inverse_transform(y_train),
+    label_encoder.inverse_transform(y_pred_train),
+    display_labels=label_encoder.classes_,
     cmap="Blues",
     xticks_rotation=45,
-    values_format=".0f"
+    values_format=".0f",
+    ax=ax[0]
 )
-plt.title("Estados del Tanque - Matriz de Confusión")
+ax[0].set_title("Matriz de Confusión - Train")
+
+ConfusionMatrixDisplay.from_predictions(
+    label_encoder.inverse_transform(y_test),
+    label_encoder.inverse_transform(y_pred_test),
+    display_labels=label_encoder.classes_,
+    cmap="Blues",
+    xticks_rotation=45,
+    values_format=".0f",
+    ax=ax[1]
+)
+ax[1].set_title("Matriz de Confusión - Test")
+
 plt.tight_layout()
 plt.savefig(CONFIG["output"]["plot_path"])
 plt.show()
 
-# Guardar recursos
+# Guardar modelos
 joblib.dump(model, CONFIG["output"]["model_path"])
 joblib.dump(label_encoder, CONFIG["output"]["encoder_path"])
 
-print(f"\nProceso completado. Modelo guardado en {CONFIG['output']['model_path']}")
+print(f"\nModelo guardado en {CONFIG['output']['model_path']}")
