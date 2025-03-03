@@ -1,12 +1,13 @@
 import requests
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import argparse
 
 def main(csv_path):
     # Leer el CSV
     df = pd.read_csv(csv_path, parse_dates=["DateTime"], infer_datetime_format=True)
-    # AccelX,DateTime,Over surface temperature (ºC),Surface temperature (ºC)
+    
     # Verificar columnas requeridas
     required_columns = ["AccelX", "Surface temperature (ºC)", "Over surface temperature (ºC)"]
     if not all(col in df.columns for col in required_columns):
@@ -27,50 +28,60 @@ def main(csv_path):
         print(f"Error: {result['error']}")
         return
     
-    # Crear DataFrame con resultados
+    # Agregar predicciones al DataFrame
     df["Prediction"] = result["predictions"]
     
-    # Crear figura
-    plt.figure(figsize=(15, 10))
+    # Crear figura y ejes
+    fig, ax1 = plt.subplots(figsize=(14, 8))
     
-    # Configurar eje de tiempo
-    x_axis = df["DateTime"] if "DateTime" in df.columns else df.index
+    # Graficar datos de IMU en ax1
+    ax1.plot(df['DateTime'], df['AccelX'], label='Accel X', color='b', marker='.', linestyle='-', markersize=4)
+    ax1.set_xlabel("Fecha/Hora")
+    ax1.set_ylabel("Accel X", color='b')
+    ax1.tick_params(axis='y', labelcolor='b')
+    ax1.grid(True)
     
-    # Gráfica de sensores
-    plt.subplot(4, 1, 1)
-    plt.plot(x_axis, df["AccelX"], label='AccelX')
-    plt.title("Datos de Sensores y Predicciones")
-    plt.ylabel("AccelX")
-    plt.legend()
+    # Crear un segundo eje para las temperaturas
+    ax2 = ax1.twinx()
+    ax2.plot(df['DateTime'], df['Surface temperature (ºC)'], label='Surface Temp', color='g', marker='.', linestyle='-', markersize=4)
+    ax2.plot(df['DateTime'], df['Over surface temperature (ºC)'], label='Over Surface Temp', color='orange', marker='.', linestyle='-', markersize=4)
+    ax2.set_ylabel("Temperatura (ºC)", color='g')
+    ax2.tick_params(axis='y', labelcolor='g')
     
-    plt.subplot(4, 1, 2)
-    plt.plot(x_axis, df["Surface temperature (ºC)"], color='orange', label='Surface Temp')
-    plt.ylabel("Temp. Superficie (ºC)")
-    plt.legend()
-    
-    plt.subplot(4, 1, 3)
-    plt.plot(x_axis, df["Over surface temperature (ºC)"], color='red', label='Over Surface Temp')
-    plt.ylabel("Temp. Exterior (ºC)")
-    plt.legend()
-    
-    # Gráfica de predicciones
-    plt.subplot(4, 1, 4)
-    unique_states = list(set(result["predictions"]))
-    color_map = {state: plt.cm.tab10(i) for i, state in enumerate(unique_states)}
+    # Colorear las zonas con las etiquetas en el gráfico
+    unique_states = list(set(df["Prediction"]))
+    color_map = {
+        "MAINTENANCE": 'lightyellow',
+        "CLEANING": 'orange',
+        "MILKING": 'lightgreen',
+        "COOLING": 'lightblue',
+        "EMPTY TANK": 'lightcoral'
+    }
     
     for state in unique_states:
+        if state not in color_map:
+            continue  # Ignorar estados desconocidos
+        
         mask = df["Prediction"] == state
-        plt.scatter(x_axis[mask], df["Prediction"][mask], 
-                    color=color_map[state], label=state, alpha=0.7)
+        ax1.fill_between(df['DateTime'], ax1.get_ylim()[0], ax1.get_ylim()[1], 
+                         where=mask, color=color_map[state], alpha=0.3, label=f'{state} Period')
     
-    plt.yticks(unique_states, unique_states)
-    plt.ylabel("Estado")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    # Formatear el eje X
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+    ax1.xaxis.set_major_locator(mdates.HourLocator(interval=1))
+    plt.xticks(rotation=45)
     
+    # Agregar leyendas
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1, labels1, loc='upper left')
+    ax2.legend(lines2, labels2, loc='upper right')
+    
+    # Título y mostrar gráfico
+    plt.title("Datos IMU, Temperaturas y Predicciones en el Tiempo")
     plt.tight_layout()
     plt.show()
 
 if __name__ == "__main__":
     csv_path = "test.csv"
-    
     main(csv_path)
