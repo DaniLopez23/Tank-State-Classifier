@@ -6,7 +6,7 @@ import pandas as pd
 import json  # Importar para leer el archivo JSON
 
 # --- CONSTANTES A CONFIGURAR ---
-DATE = "2024-08-24"  # La fecha que quieres procesar
+DATE = "2024-08-27"  # La fecha que quieres procesar
 
 INPUT_CSV = f"merged_data/merged_data_{DATE}.csv"  
 OUTPUT_CSV = f"labeled_data/labeled_data_{DATE}.csv"
