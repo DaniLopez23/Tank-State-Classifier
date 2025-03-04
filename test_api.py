@@ -6,7 +6,7 @@ import argparse
 
 def main(csv_path):
     # Leer el CSV
-    df = pd.read_csv(csv_path, parse_dates=["DateTime"], infer_datetime_format=True)
+    df = pd.read_csv(csv_path, parse_dates=["DateTime"])
     
     # Verificar columnas requeridas
     required_columns = ["AccelX", "Surface temperature (ºC)", "Over surface temperature (ºC)"]
@@ -22,10 +22,16 @@ def main(csv_path):
     
     # Hacer la petición
     response = requests.post("http://localhost:8000/predict", json=data)
-    result = response.json()
-    
-    if "error" in result:
-        print(f"Error: {result['error']}")
+
+    # Verificar el contenido de la respuesta
+    print("Status Code:", response.status_code)
+    print("Response Text:", response.text)
+
+    # Intentar decodificar la respuesta como JSON
+    try:
+        result = response.json()
+    except requests.exceptions.JSONDecodeError as e:
+        print(f"Error al decodificar JSON: {e}")
         return
     
     # Agregar predicciones al DataFrame

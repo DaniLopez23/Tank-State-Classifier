@@ -47,6 +47,9 @@ async def predict(request: PredictionRequest):
                 final_pred = "UNKNOWN"
             final_predictions.append(final_pred)
         
+        # Reemplazar valores NaN en las predicciones
+        final_predictions = ["UNKNOWN" if pd.isna(pred) else pred for pred in final_predictions]
+        
         return {
             "predictions": final_predictions,
             "states": le.classes_.tolist()
@@ -63,6 +66,9 @@ def process_input(data: PredictionRequest):
         'Over surface temperature (ºC)': data.OverSurfaceTemperature
     })
     
+    # Reemplazar valores NaN en los datos de entrada
+    df = df.fillna(0)  # Puedes usar otro valor predeterminado si es necesario
+    
     if len(df) < WINDOW_SIZE:
         raise ValueError(f"Se requieren al menos {WINDOW_SIZE} muestras")
     
@@ -74,7 +80,6 @@ def process_input(data: PredictionRequest):
         windows.append(X[i:i+WINDOW_SIZE].T)
     
     return np.array(windows), step  # Devolver step junto con windows
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
