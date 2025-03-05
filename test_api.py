@@ -2,7 +2,8 @@ import requests
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-import argparse
+
+DATE = "2024-08-27"
 
 def main(csv_path):
     # Leer el CSV
@@ -25,7 +26,6 @@ def main(csv_path):
 
     # Verificar el contenido de la respuesta
     print("Status Code:", response.status_code)
-    print("Response Text:", response.text)
 
     # Intentar decodificar la respuesta como JSON
     try:
@@ -35,7 +35,12 @@ def main(csv_path):
         return
     
     # Agregar predicciones al DataFrame
-    df["Prediction"] = result["predictions"]
+    try:
+        df["Prediction"] = result["predictions"]
+    except KeyError as e:
+        print(f"Error al obtener predicciones: {e}")
+        print("Respuesta:", result)
+        return
     
     # Crear figura y ejes
     fig, ax1 = plt.subplots(figsize=(14, 8))
@@ -57,11 +62,11 @@ def main(csv_path):
     # Colorear las zonas con las etiquetas en el gráfico
     unique_states = list(set(df["Prediction"]))
     color_map = {
-        "MAINTENANCE": 'lightyellow',
+        "MAINTENANCE": 'yellow',
         "CLEANING": 'orange',
-        "MILKING": 'lightgreen',
-        "COOLING": 'lightblue',
-        "EMPTY TANK": 'lightcoral'
+        "MILKING": 'blue',
+        "COOLING": 'green',
+        "EMPTY TANK": 'red'
     }
     
     for state in unique_states:
@@ -84,10 +89,13 @@ def main(csv_path):
     ax2.legend(lines2, labels2, loc='upper right')
     
     # Título y mostrar gráfico
-    plt.title("Datos IMU, Temperaturas y Predicciones en el Tiempo")
+    plt.title(f"Datos IMU, Temperaturas y Predicciones en el Tiempo ({DATE})")
     plt.tight_layout()
     plt.show()
 
 if __name__ == "__main__":
-    csv_path = "test.csv"
+    
+    csv_path = f"data_per_second_strategy/merged_data/merged_data_{DATE}.csv"
+    test_csv_path = "test.csv"
+    
     main(csv_path)

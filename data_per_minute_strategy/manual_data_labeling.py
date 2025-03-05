@@ -3,23 +3,22 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
-import json  # Importar para leer el archivo JSON
+import json  
 
 # --- CONSTANTES A CONFIGURAR ---
-DATE = "2024-08-20"  # La fecha que quieres procesar
+DATE = "2024-08-27"  
 
 INPUT_CSV = f"merged_data/merged_data_{DATE}.csv"  
 OUTPUT_CSV = f"labeled_data/labeled_data_{DATE}.csv"
-INTERVALS_FILE = "labelFile.json"  # Archivo JSON con los intervalos
+INTERVALS_FILE = "../labelFile.json"  
 
 COLUMNA_TIMESTAMP = 'DateTime'
-FORMATO_TIMESTAMP = '%Y-%m-%d %H:%M:%S%z'  # Ahora incluye la zona horaria
+FORMATO_TIMESTAMP = '%Y-%m-%d %H:%M:%S%z'  
 
 # --- CARGAR INTERVALOS DESDE ARCHIVO JSON ---
 def cargar_intervalos_desde_json(fecha):
     with open(INTERVALS_FILE, 'r') as archivo_json:
         intervalos_data = json.load(archivo_json)
-        # Devolver los intervalos para la fecha solicitada
         return intervalos_data.get(fecha, [])
 
 INTERVALOS_ETIQUETAS = cargar_intervalos_desde_json(DATE)
@@ -35,28 +34,28 @@ for intervalo in INTERVALOS_ETIQUETAS:
     }
     intervalos.append(intervalo_convertido)
 
-# Leer y procesar archivo
+# Leer archivo CSV y etiquetar datos
+filas_etiquetadas = []
 with open(INPUT_CSV, 'r') as archivo_entrada:
     lector = csv.DictReader(archivo_entrada)
-    filas = list(lector)
-    
     campos = lector.fieldnames + ['ETIQUETA']
-
-    for fila in filas:
-        # Parsear timestamp con zona horaria
+    
+    for fila in lector:
         timestamp = datetime.strptime(fila[COLUMNA_TIMESTAMP], FORMATO_TIMESTAMP)
-        fila['ETIQUETA'] = ''
+        etiquetas = set()
         
         for intervalo in intervalos:
             if intervalo['inicio'] <= timestamp <= intervalo['fin']:
-                fila['ETIQUETA'] = intervalo['etiqueta']
-                break
+                etiquetas.add(intervalo['etiqueta'])
+        
+        fila['ETIQUETA'] = '_'.join(sorted(etiquetas)) if etiquetas else 'NO_LABEL'
+        filas_etiquetadas.append(fila)
 
-# Escribir resultados
+# Escribir archivo de salida
 with open(OUTPUT_CSV, 'w', newline='') as archivo_salida:
     escritor = csv.DictWriter(archivo_salida, fieldnames=campos)
     escritor.writeheader()
-    escritor.writerows(filas)
+    escritor.writerows(filas_etiquetadas)
 
 print(f"Proceso completado. Resultados en: {OUTPUT_CSV}")
 
