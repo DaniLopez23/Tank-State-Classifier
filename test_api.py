@@ -3,8 +3,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-DATE = "2024-09-02"
-DATA_STRATEGY = "second"
+DATE = "2024-09-27"
+DATA_STRATEGY = "minute"   # "second" o "minute"
 MODEL_PATH = f"data_per_{DATA_STRATEGY}_strategy/model/trained_model.pkl"
 
 def main(csv_path):

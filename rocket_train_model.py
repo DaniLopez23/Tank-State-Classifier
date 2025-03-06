@@ -12,10 +12,10 @@ from imblearn.over_sampling import SMOTE
 from collections import Counter
 
 # Configuración
-DATA_STRATEGY = "second"
+DATA_STRATEGY = "minute"   # "second" o "minute"
 
-WINDOW_SIZE = 1800 if DATA_STRATEGY == "second" else 20   # 20 minutos en segundos
-STEP_SIZE = 1800 if DATA_STRATEGY == "second" else 20   # 20 minutos en segundos
+WINDOW_SIZE = 1800 if DATA_STRATEGY == "second" else 30   # 20 minutos en segundos
+STEP_SIZE = 1800 if DATA_STRATEGY == "second" else 30   # 20 minutos en segundos
 
 DATA_TRAIN_DIR = f"data_per_{DATA_STRATEGY}_strategy/data/train"
 DATA_TEST_DIR = f"data_per_{DATA_STRATEGY}_strategy/data/test"
@@ -23,6 +23,47 @@ DATA_VALID_DIR = f"data_per_{DATA_STRATEGY}_strategy/data/valid"
 
 MODEL_SAVE_PATH = f"data_per_{DATA_STRATEGY}_strategy/model/trained_model.pkl"
 REPORT_DIR = f"data_per_{DATA_STRATEGY}_strategy/reports"
+
+# Configuración de Rocket
+ROCKET_KERNELS = {
+    "second": 10000,
+    "minute": 10000
+}
+
+# Configuración de LightGBM
+LGBM_PARAMS = {
+    "second": {
+        "n_estimators": 500,
+        "learning_rate": 0.05,
+        "num_leaves": 256,
+        "max_depth": 10,
+        "min_data_in_leaf": 50,
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.9,
+        "bagging_freq": 5,
+        "lambda_l1": 0.1,
+        "lambda_l2": 0.1,
+        "max_bin": 255
+    },
+    "minute": {
+        "n_estimators": 2000,  # Dejar que early stopping decida
+        "learning_rate": 0.1,
+        "num_leaves": 55,
+        "max_depth": 7,
+        "min_data_in_leaf": 75,
+        "feature_fraction": 0.6,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 10,
+        "lambda_l1": 0.3,
+        "lambda_l2": 0.7,
+        "max_bin": 100
+    }
+}
+
+# Selección de configuración según estrategia
+NUM_KERNELS = ROCKET_KERNELS[DATA_STRATEGY]
+LGBM_CONFIG = LGBM_PARAMS[DATA_STRATEGY]
+
 
 def load_and_preprocess_data(folder_path):
     """Carga y preprocesa todos los CSVs en un directorio"""
@@ -136,17 +177,14 @@ plot_class_distribution(y_train_windows, y_train_resampled)
 
 # Entrenar modelo Rocket
 print("Entrenando modelo Rocket...")
-rocket = Rocket(num_kernels=10000, random_state=42)
+rocket = Rocket(num_kernels=NUM_KERNELS, random_state=42)
 rocket.fit(X_train_resampled)
 X_train_transformed = rocket.transform(X_train_resampled)
 X_valid_transformed = rocket.transform(X_valid_windows)
 
 # Entrenar clasificador con LightGBM
 print("Entrenando clasificador con LightGBM...")
-classifier = LGBMClassifier(
-    n_estimators=500,
-    learning_rate=0.05,
-)
+classifier = LGBMClassifier(**LGBM_CONFIG)
 classifier.fit(X_train_transformed, y_train_resampled)
 
 # Evaluación

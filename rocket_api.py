@@ -5,7 +5,7 @@ import joblib
 import pandas as pd
 import uvicorn
 
-DATA_STRATEGY = "second"
+DATA_STRATEGY = "minute"   # "second" o "minute"
 MODEL_PATH = f"data_per_{DATA_STRATEGY}_strategy/model/trained_model.pkl"
 
 app = FastAPI()

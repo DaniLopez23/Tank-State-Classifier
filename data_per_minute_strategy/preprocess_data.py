@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
 
-DATE = "2024-08-27"
+DATE = "2024-08-19"
 
 # Definir rutas de los archivos
 TEMP_FILE = f"../temp_data/temp_data_{DATE}.csv"
