@@ -14,14 +14,15 @@ from collections import Counter
 # Configuración
 DATA_STRATEGY = "second"
 
-WINDOW_SIZE = 1200  # 20 minutos en segundos
-STEP_SIZE = 1200    # Paso de 20 minutos
+WINDOW_SIZE = 1800 if DATA_STRATEGY == "second" else 20   # 20 minutos en segundos
+STEP_SIZE = 1800 if DATA_STRATEGY == "second" else 20   # 20 minutos en segundos
+
 DATA_TRAIN_DIR = f"data_per_{DATA_STRATEGY}_strategy/data/train"
 DATA_TEST_DIR = f"data_per_{DATA_STRATEGY}_strategy/data/test"
 DATA_VALID_DIR = f"data_per_{DATA_STRATEGY}_strategy/data/valid"
 
-MODEL_SAVE_PATH = "model/trained_model.pkl"
-REPORT_DIR = "reports"
+MODEL_SAVE_PATH = f"data_per_{DATA_STRATEGY}_strategy/model/trained_model.pkl"
+REPORT_DIR = f"data_per_{DATA_STRATEGY}_strategy/reports"
 
 def load_and_preprocess_data(folder_path):
     """Carga y preprocesa todos los CSVs en un directorio"""
@@ -49,14 +50,22 @@ def load_and_preprocess_data(folder_path):
 
     return features.values, labels.values, full_df
 
-def clean_labels(labels):
-    labels = pd.Series(labels).astype(str).fillna("Desconocido").replace("nan", "Desconocido").values
-    #print("Valores únicos después de transformar:", set(labels))
-    return labels
-
-def filter_unknown_labels(labels, known_labels):
-    """Filtra etiquetas desconocidas que no están en known_labels"""
-    return np.array([label if label in known_labels else 'Desconocido' for label in labels])
+def plot_class_distribution(y_before, y_after):
+    """Grafica la distribución de clases antes y después de SMOTE"""
+    fig, ax = plt.subplots(1, 2, figsize=(12, 5))
+    
+    sns.barplot(x=list(Counter(y_before).keys()), y=list(Counter(y_before).values()), ax=ax[0])
+    ax[0].set_title("Distribución de clases antes de SMOTE")
+    ax[0].set_xlabel("Clases")
+    ax[0].set_ylabel("Frecuencia")
+    
+    sns.barplot(x=list(Counter(y_after).keys()), y=list(Counter(y_after).values()), ax=ax[1])
+    ax[1].set_title("Distribución de clases después de SMOTE")
+    ax[1].set_xlabel("Clases")
+    ax[1].set_ylabel("Frecuencia")
+    
+    plt.tight_layout()
+    plt.savefig(f"{REPORT_DIR}/class_distribution.png")
 
 def create_windows(features, labels, window_size, step):
     X, y = [], []
@@ -86,15 +95,6 @@ def evaluate_model(model, X, y, label_encoder, split_type="Train"):
     
     return accuracy_score(y, y_pred)
 
-def predict_blocks(model, rocket, scaler, label_encoder, data, window_size, step_size):
-    """Predice bloques de datos de 20 minutos"""
-    X_scaled = scaler.transform(data)
-    X_windows, _ = create_windows(X_scaled, np.zeros(len(X_scaled)), window_size, step_size)
-    X_transformed = rocket.transform(X_windows)
-    y_pred = model.predict(X_transformed)
-    y_pred_labels = label_encoder.inverse_transform(y_pred)
-    return y_pred_labels
-
 # Crear directorios necesarios
 os.makedirs(REPORT_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(MODEL_SAVE_PATH), exist_ok=True)
@@ -102,7 +102,6 @@ os.makedirs(os.path.dirname(MODEL_SAVE_PATH), exist_ok=True)
 # Cargar y preparar datos de entrenamiento
 print("Cargando datos de entrenamiento...")
 X_train_raw, y_train_raw, df_train = load_and_preprocess_data(DATA_TRAIN_DIR)
-y_train_raw = clean_labels(y_train_raw)
 
 scaler = StandardScaler()
 X_train_scaled = scaler.fit_transform(X_train_raw)
@@ -113,7 +112,6 @@ y_train_encoded = le.fit_transform(y_train_raw)
 # Cargar y procesar datos de validación
 print("Cargando datos de validación...")
 X_valid_raw, y_valid_raw, _ = load_and_preprocess_data(DATA_VALID_DIR)
-y_valid_raw = clean_labels(y_valid_raw)
 X_valid_scaled = scaler.transform(X_valid_raw)
 y_valid_encoded = le.transform(y_valid_raw)
 X_valid_windows, y_valid_windows = create_windows(X_valid_scaled, y_valid_encoded, WINDOW_SIZE, STEP_SIZE)
@@ -134,9 +132,11 @@ smote = SMOTE(random_state=42, k_neighbors=k_neighbors)
 X_train_resampled, y_train_resampled = smote.fit_resample(X_train_windows.reshape(X_train_windows.shape[0], -1), y_train_windows)
 X_train_resampled = X_train_resampled.reshape(X_train_resampled.shape[0], 3, WINDOW_SIZE)
 
+plot_class_distribution(y_train_windows, y_train_resampled)
+
 # Entrenar modelo Rocket
 print("Entrenando modelo Rocket...")
-rocket = Rocket(num_kernels=8000, random_state=42)
+rocket = Rocket(num_kernels=10000, random_state=42)
 rocket.fit(X_train_resampled)
 X_train_transformed = rocket.transform(X_train_resampled)
 X_valid_transformed = rocket.transform(X_valid_windows)
@@ -144,15 +144,8 @@ X_valid_transformed = rocket.transform(X_valid_windows)
 # Entrenar clasificador con LightGBM
 print("Entrenando clasificador con LightGBM...")
 classifier = LGBMClassifier(
-    n_estimators=300,  # Aumenta la cantidad de árboles
-    learning_rate=0.05,  # Reduce la tasa de aprendizaje
-    num_leaves=50,  # Controla la complejidad del modelo
-    max_depth=7,  # Evita árboles demasiado profundos
-    subsample=0.8,  # Reduce overfitting
-    colsample_bytree=0.9,  # Usa 90% de las features en cada árbol
-    reg_alpha=0.1,  # Regularización L1
-    reg_lambda=0.1,  # Regularización L2
-    random_state=42
+    n_estimators=500,
+    learning_rate=0.05,
 )
 classifier.fit(X_train_transformed, y_train_resampled)
 
@@ -165,8 +158,6 @@ if os.path.exists(DATA_TEST_DIR) and os.listdir(DATA_TEST_DIR):
     try:
         print("\nEvaluando con datos de test...")
         X_test_raw, y_test_raw, _ = load_and_preprocess_data(DATA_TEST_DIR)
-        y_test_raw = clean_labels(y_test_raw)
-        y_test_raw = filter_unknown_labels(y_test_raw, le.classes_)
         X_test_scaled = scaler.transform(X_test_raw)
         y_test_encoded = le.transform(y_test_raw)
         X_test_windows, y_test_windows = create_windows(X_test_scaled, y_test_encoded, WINDOW_SIZE, STEP_SIZE)

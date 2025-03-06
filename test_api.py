@@ -3,7 +3,9 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-DATE = "2024-08-27"
+DATE = "2024-09-02"
+DATA_STRATEGY = "second"
+MODEL_PATH = f"data_per_{DATA_STRATEGY}_strategy/model/trained_model.pkl"
 
 def main(csv_path):
     # Leer el CSV
@@ -95,7 +97,7 @@ def main(csv_path):
 
 if __name__ == "__main__":
     
-    csv_path = f"data_per_second_strategy/merged_data/merged_data_{DATE}.csv"
+    csv_path = f"data_per_{DATA_STRATEGY}_strategy/merged_data/merged_data_{DATE}.csv"
     test_csv_path = "test.csv"
     
     main(csv_path)

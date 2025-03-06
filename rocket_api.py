@@ -5,10 +5,13 @@ import joblib
 import pandas as pd
 import uvicorn
 
+DATA_STRATEGY = "second"
+MODEL_PATH = f"data_per_{DATA_STRATEGY}_strategy/model/trained_model.pkl"
+
 app = FastAPI()
 
 # Cargar modelo
-model_data = joblib.load("model/rocket/trained_model.pkl")
+model_data = joblib.load(MODEL_PATH)
 rocket = model_data['rocket']
 classifier = model_data['classifier']
 scaler = model_data['scaler']
