@@ -36,6 +36,15 @@ def main(csv_path):
         print(f"Error al decodificar JSON: {e}")
         return
     
+    # Exportar resultado a CSV
+    try:
+        df["Prediction"] = result["predictions"]
+        df.to_csv("predictedData.csv", index=False)
+    except KeyError as e:
+        print(f"Error al obtener predicciones: {e}")
+        print("Respuesta:", result)
+        return
+    
     # Agregar predicciones al DataFrame
     try:
         df["Prediction"] = result["predictions"]
@@ -100,4 +109,4 @@ if __name__ == "__main__":
     csv_path = f"data_per_{DATA_STRATEGY}_strategy/merged_data/merged_data_{DATE}.csv"
     test_csv_path = "test.csv"
     
-    main(csv_path)
+    main(test_csv_path)

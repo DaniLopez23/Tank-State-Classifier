@@ -6,16 +6,17 @@ import seaborn as sns
 import joblib
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sktime.transformations.panel.rocket import Rocket
-from lightgbm import LGBMClassifier
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, ConfusionMatrixDisplay
+from lightgbm import LGBMClassifier, early_stopping
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, ConfusionMatrixDisplay, f1_score
 from imblearn.over_sampling import SMOTE
 from collections import Counter
+from sklearn.model_selection import TimeSeriesSplit
 
 # Configuración
-DATA_STRATEGY = "minute"   # "second" o "minute"
+DATA_STRATEGY = "second"   # "second" o "minute"
 
-WINDOW_SIZE = 1800 if DATA_STRATEGY == "second" else 30   # 20 minutos en segundos
-STEP_SIZE = 1800 if DATA_STRATEGY == "second" else 30   # 20 minutos en segundos
+WINDOW_SIZE = 1800 if DATA_STRATEGY == "second" else 30   # 30 minutos
+STEP_SIZE = 900 if DATA_STRATEGY == "second" else 15      # 50% de solapamiento
 
 DATA_TRAIN_DIR = f"data_per_{DATA_STRATEGY}_strategy/data/train"
 DATA_TEST_DIR = f"data_per_{DATA_STRATEGY}_strategy/data/test"
@@ -33,37 +34,41 @@ ROCKET_KERNELS = {
 # Configuración de LightGBM
 LGBM_PARAMS = {
     "second": {
-        "n_estimators": 500,
+        "objective": "multiclass",
+        "metric": "multi_logloss",
+        "n_estimators": 2000,
         "learning_rate": 0.05,
-        "num_leaves": 256,
-        "max_depth": 10,
+        "num_leaves": 128,
+        "max_depth": -1,
+        "min_data_in_leaf": 100,
+        "feature_fraction": 0.7,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 10,
+        "lambda_l1": 0.2,
+        "lambda_l2": 0.2,
+        "n_jobs": -1,
+        "random_state": 42
+    },
+    "minute": {
+        "objective": "multiclass",
+        "metric": "multi_logloss",
+        "n_estimators": 1000,
+        "learning_rate": 0.1,
+        "num_leaves": 64,
+        "max_depth": 7,
         "min_data_in_leaf": 50,
-        "feature_fraction": 0.8,
-        "bagging_fraction": 0.9,
+        "feature_fraction": 0.6,
+        "bagging_fraction": 0.7,
         "bagging_freq": 5,
         "lambda_l1": 0.1,
         "lambda_l2": 0.1,
-        "max_bin": 255
-    },
-    "minute": {
-        "n_estimators": 2000,  # Dejar que early stopping decida
-        "learning_rate": 0.1,
-        "num_leaves": 55,
-        "max_depth": 7,
-        "min_data_in_leaf": 75,
-        "feature_fraction": 0.6,
-        "bagging_fraction": 0.8,
-        "bagging_freq": 10,
-        "lambda_l1": 0.3,
-        "lambda_l2": 0.7,
-        "max_bin": 100
+        "n_jobs": -1,
+        "random_state": 42
     }
 }
 
-# Selección de configuración según estrategia
 NUM_KERNELS = ROCKET_KERNELS[DATA_STRATEGY]
 LGBM_CONFIG = LGBM_PARAMS[DATA_STRATEGY]
-
 
 def load_and_preprocess_data(folder_path):
     """Carga y preprocesa todos los CSVs en un directorio"""
@@ -73,12 +78,13 @@ def load_and_preprocess_data(folder_path):
     for file in all_files:
         print(f"Processing {file}...")
         df = pd.read_csv(os.path.join(folder_path, file), parse_dates=["DateTime"])
-
-        # Verificar valores vacíos (strings vacíos)
-        empty_values = (df == "").sum()
-        if empty_values.any():
-            print(f"Valores vacíos en {file}:\n{empty_values[empty_values > 0]}\n")
-
+        
+        # Verificar y manejar valores faltantes
+        if df.isnull().any().any():
+            print(f"Valores faltantes en {file}:")
+            print(df.isnull().sum())
+            df.ffill(inplace=True)  # Forward fill para series temporales
+        
         dfs.append(df)
     
     full_df = pd.concat(dfs, ignore_index=True)
@@ -86,143 +92,152 @@ def load_and_preprocess_data(folder_path):
     features = full_df[["AccelX", "Surface temperature (ºC)", "Over surface temperature (ºC)"]]
     labels = full_df["ETIQUETA"]
 
-    print(f"Total de muestras: {len(full_df)}\n")
-    print(f"Clases: {labels.value_counts()}\n")
+    print(f"\nTotal de muestras: {len(full_df)}")
+    print("Distribución de clases:")
+    print(labels.value_counts(normalize=True).apply(lambda x: f"{x:.2%}"), "\n")
 
     return features.values, labels.values, full_df
 
-def plot_class_distribution(y_before, y_after):
-    """Grafica la distribución de clases antes y después de SMOTE"""
-    fig, ax = plt.subplots(1, 2, figsize=(12, 5))
-    
-    sns.barplot(x=list(Counter(y_before).keys()), y=list(Counter(y_before).values()), ax=ax[0])
-    ax[0].set_title("Distribución de clases antes de SMOTE")
-    ax[0].set_xlabel("Clases")
-    ax[0].set_ylabel("Frecuencia")
-    
-    sns.barplot(x=list(Counter(y_after).keys()), y=list(Counter(y_after).values()), ax=ax[1])
-    ax[1].set_title("Distribución de clases después de SMOTE")
-    ax[1].set_xlabel("Clases")
-    ax[1].set_ylabel("Frecuencia")
-    
-    plt.tight_layout()
-    plt.savefig(f"{REPORT_DIR}/class_distribution.png")
-
 def create_windows(features, labels, window_size, step):
+    """Crea ventanas temporales con escalado independiente para cada ventana"""
     X, y = [], []
     for i in range(0, len(features) - window_size + 1, step):
-        X_window = features[i:i+window_size]
+        # Escalado por ventana para evitar data leakage
+        scaler = StandardScaler()
+        X_window = scaler.fit_transform(features[i:i+window_size])
         y_window = labels[i:i+window_size]
+        
+        # Determinar etiqueta (según lógica actual)
         label = max(set(y_window), key=list(y_window).count)
-        X.append(X_window.T)
+        
+        X.append(X_window.T)  # Formato (n_variables, window_size)
         y.append(label)
     
-    print(f"Total de ventanas creadas: {len(X)}")
+    print(f"\nVentanas creadas: {len(X)}")
+    print(f"Tamaño de cada ventana: {window_size} muestras")
+    print(f"Paso entre ventanas: {step} muestras\n")
     return np.array(X), np.array(y)
 
+def apply_smote(X, y, window_size):
+    """Aplica SMOTE en el espacio de características de Rocket"""
+    print("\nAplicando SMOTE en el espacio de características...")
+    smote = SMOTE(random_state=42, k_neighbors=min(5, Counter(y)[1]-1))
+    X_res, y_res = smote.fit_resample(X, y)
+    return X_res, y_res
+
 def evaluate_model(model, X, y, label_encoder, split_type="Train"):
-    """Genera métricas detalladas y visualizaciones"""
+    """Evaluación avanzada con múltricas adicionales"""
     y_pred = model.predict(X)
-    print(f"\n{split_type} Classification Report:")
-    print(classification_report(y, y_pred, target_names=label_encoder.classes_, labels=range(len(label_encoder.classes_))))
+    y_proba = model.predict_proba(X)
     
-    cm = confusion_matrix(y, y_pred, labels=range(len(label_encoder.classes_)))
+    print(f"\n{split_type} Classification Report:")
+    print(classification_report(y, y_pred, target_names=label_encoder.classes_))
+    
+    # Métricas adicionales
+    f1 = f1_score(y, y_pred, average='weighted')
+    print(f"Weighted F1-Score: {f1:.3f}")
+    
+    # Matriz de confusión
+    cm = confusion_matrix(y, y_pred)
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=label_encoder.classes_)
-    fig, ax = plt.subplots(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(10, 8))
     disp.plot(ax=ax, cmap='Blues', xticks_rotation=45)
     plt.title(f"{split_type} Confusion Matrix")
     plt.savefig(f"{REPORT_DIR}/{split_type.lower()}_confusion_matrix.png")
     plt.close()
     
-    return accuracy_score(y, y_pred)
+    return accuracy_score(y, y_pred), f1
+
+def train_model(X_train, y_train, X_valid, y_valid):
+    """Entrenamiento con validación temprana"""
+    model = LGBMClassifier(**LGBM_CONFIG)
+    
+    model.fit(
+        X_train, 
+        y_train,
+        eval_set=[(X_valid, y_valid)],
+        eval_metric="multi_logloss",
+        callbacks=[early_stopping(stopping_rounds=50, verbose=1)]
+    )
+    
+    return model
 
 # Crear directorios necesarios
 os.makedirs(REPORT_DIR, exist_ok=True)
 os.makedirs(os.path.dirname(MODEL_SAVE_PATH), exist_ok=True)
 
-# Cargar y preparar datos de entrenamiento
+# Cargar y procesar datos
+print("\n" + "="*50)
 print("Cargando datos de entrenamiento...")
 X_train_raw, y_train_raw, df_train = load_and_preprocess_data(DATA_TRAIN_DIR)
-
-scaler = StandardScaler()
-X_train_scaled = scaler.fit_transform(X_train_raw)
 
 le = LabelEncoder()
 y_train_encoded = le.fit_transform(y_train_raw)
 
-# Cargar y procesar datos de validación
+# Crear ventanas temporales
+print("Creando ventanas de entrenamiento...")
+X_train_windows, y_train_windows = create_windows(X_train_raw, y_train_encoded, WINDOW_SIZE, STEP_SIZE)
+
+# Procesar datos de validación
+print("\n" + "="*50)
 print("Cargando datos de validación...")
 X_valid_raw, y_valid_raw, _ = load_and_preprocess_data(DATA_VALID_DIR)
-X_valid_scaled = scaler.transform(X_valid_raw)
 y_valid_encoded = le.transform(y_valid_raw)
-X_valid_windows, y_valid_windows = create_windows(X_valid_scaled, y_valid_encoded, WINDOW_SIZE, STEP_SIZE)
-
-# Crear ventanas para entrenamiento
-print("Creando ventanas temporales de entrenamiento...")
-X_train_windows, y_train_windows = create_windows(X_train_scaled, y_train_encoded, WINDOW_SIZE, STEP_SIZE)
-
-# Verificar la distribución de clases en las ventanas
-class_counts = Counter(y_train_windows)
-
-# Ajustar k_neighbors para SMOTE
-k_neighbors = min(5, min(class_counts.values()) - 1)
-
-# Aplicar SMOTE
-print("Aplicando SMOTE para balancear clases...")
-smote = SMOTE(random_state=42, k_neighbors=k_neighbors)
-X_train_resampled, y_train_resampled = smote.fit_resample(X_train_windows.reshape(X_train_windows.shape[0], -1), y_train_windows)
-X_train_resampled = X_train_resampled.reshape(X_train_resampled.shape[0], 3, WINDOW_SIZE)
-
-plot_class_distribution(y_train_windows, y_train_resampled)
+X_valid_windows, y_valid_windows = create_windows(X_valid_raw, y_valid_encoded, WINDOW_SIZE, STEP_SIZE)
 
 # Entrenar modelo Rocket
-print("Entrenando modelo Rocket...")
+print("\n" + "="*50)
+print("Entrenando transformación Rocket...")
 rocket = Rocket(num_kernels=NUM_KERNELS, random_state=42)
-rocket.fit(X_train_resampled)
-X_train_transformed = rocket.transform(X_train_resampled)
+rocket.fit(X_train_windows)
+
+# Transformar datos
+X_train_transformed = rocket.transform(X_train_windows)
 X_valid_transformed = rocket.transform(X_valid_windows)
 
-# Entrenar clasificador con LightGBM
-print("Entrenando clasificador con LightGBM...")
-classifier = LGBMClassifier(**LGBM_CONFIG)
-classifier.fit(X_train_transformed, y_train_resampled)
+# Balancear clases con SMOTE
+X_train_resampled, y_train_resampled = apply_smote(X_train_transformed, y_train_windows, WINDOW_SIZE)
 
-# Evaluación
-train_acc = evaluate_model(classifier, X_train_transformed, y_train_resampled, le, "Train")
-valid_acc = evaluate_model(classifier, X_valid_transformed, y_valid_windows, le, "Validation")
+# Entrenar modelo final
+print("\n" + "="*50)
+print("Entrenando clasificador LightGBM...")
+classifier = train_model(X_train_resampled, y_train_resampled, X_valid_transformed, y_valid_windows)
 
-test_acc = None
+# Evaluación completa
+print("\n" + "="*50)
+train_acc, train_f1 = evaluate_model(classifier, X_train_resampled, y_train_resampled, le, "Train")
+valid_acc, valid_f1 = evaluate_model(classifier, X_valid_transformed, y_valid_windows, le, "Validation")
+
+# Evaluación en test si existe
+test_acc, test_f1 = None, None
 if os.path.exists(DATA_TEST_DIR) and os.listdir(DATA_TEST_DIR):
     try:
-        print("\nEvaluando con datos de test...")
+        print("\n" + "="*50)
+        print("Evaluando en conjunto de test...")
         X_test_raw, y_test_raw, _ = load_and_preprocess_data(DATA_TEST_DIR)
-        X_test_scaled = scaler.transform(X_test_raw)
         y_test_encoded = le.transform(y_test_raw)
-        X_test_windows, y_test_windows = create_windows(X_test_scaled, y_test_encoded, WINDOW_SIZE, STEP_SIZE)
+        X_test_windows, y_test_windows = create_windows(X_test_raw, y_test_encoded, WINDOW_SIZE, STEP_SIZE)
         X_test_transformed = rocket.transform(X_test_windows)
-        test_acc = evaluate_model(classifier, X_test_transformed, y_test_windows, le, "Test")
+        test_acc, test_f1 = evaluate_model(classifier, X_test_transformed, y_test_windows, le, "Test")
     except Exception as e:
-        print(f"Error al evaluar con datos de test: {e}")
+        print(f"Error en evaluación de test: {str(e)}")
 
-# Reporte final de métricas
-print("\nResumen de Métricas:")
-print(f"Train Accuracy: {train_acc:.3f}")
-print(f"Validation Accuracy: {valid_acc:.3f}")
-if test_acc is not None:
-    print(f"Test Accuracy: {test_acc:.3f}")
-
-# Guardar modelo y metadatos
+# Guardar modelo y reportes
 joblib.dump({
     'rocket': rocket,
     'classifier': classifier,
-    'scaler': scaler,
     'label_encoder': le,
-    'window_size': WINDOW_SIZE,
+    'window_config': {
+        'window_size': WINDOW_SIZE,
+        'step_size': STEP_SIZE
+    },
     'metrics': {
-        'train_accuracy': train_acc,
-        'validation_accuracy': valid_acc,
-        'test_accuracy': test_acc
+        'train': {'accuracy': train_acc, 'f1': train_f1},
+        'validation': {'accuracy': valid_acc, 'f1': valid_f1},
+        'test': {'accuracy': test_acc, 'f1': test_f1} if test_acc else None
     }
 }, MODEL_SAVE_PATH)
 
-print(f"\nModelo y reportes guardados en {MODEL_SAVE_PATH} y {REPORT_DIR}")
+print("\n" + "="*50)
+print("Entrenamiento completado exitosamente!")
+print(f"Modelo guardado en: {MODEL_SAVE_PATH}")
