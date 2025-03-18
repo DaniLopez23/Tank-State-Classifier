@@ -231,6 +231,7 @@ joblib.dump({
         'window_size': WINDOW_SIZE,
         'step_size': STEP_SIZE
     },
+    'scaler': StandardScaler(),
     'metrics': {
         'train': {'accuracy': train_acc, 'f1': train_f1},
         'validation': {'accuracy': valid_acc, 'f1': valid_f1},
