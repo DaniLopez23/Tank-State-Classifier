@@ -36,17 +36,17 @@ LGBM_PARAMS = {
     "second": {
         "objective": "multiclass",
         "metric": "multi_logloss",
-        "n_estimators": 2000,
-        "learning_rate": 0.05,
+        "n_estimators": 1000,
+        "learning_rate": 0.1,
         "num_leaves": 128,
-        "max_depth": -1,
-        "min_data_in_leaf": 100,
-        "feature_fraction": 0.7,
-        "bagging_fraction": 0.8,
-        "bagging_freq": 10,
-        "lambda_l1": 0.2,
-        "lambda_l2": 0.2,
-        "n_jobs": -1,
+        "max_depth": 5,
+        "min_data_in_leaf": 20,
+        "colsample_bytree": 0.2,  # Reemplaza feature_fraction
+        "subsample": 0.8,         # Reemplaza bagging_fraction
+        "subsample_freq": 10,      # Reemplaza bagging_freq
+        "reg_alpha": 0.05,         # En vez de lambda_l1
+        "reg_lambda": 0.05,        # En vez de lambda_l2
+        "force_col_wise": True,
         "random_state": 42
     },
     "minute": {
@@ -56,12 +56,12 @@ LGBM_PARAMS = {
         "learning_rate": 0.1,
         "num_leaves": 64,
         "max_depth": 7,
-        "min_data_in_leaf": 50,
+        "min_data_in_leaf": 20,
         "feature_fraction": 0.6,
         "bagging_fraction": 0.7,
         "bagging_freq": 5,
-        "lambda_l1": 0.1,
-        "lambda_l2": 0.1,
+        "reg_alpha": 0.05,  
+        "reg_lambda": 0.05,
         "n_jobs": -1,
         "random_state": 42
     }

@@ -79,7 +79,8 @@ def process_input(data: PredictionRequest):
     })
     
     # Manejar valores faltantes
-    df = df.fillna(method='ffill').fillna(0)
+    df = df.ffill().fillna(0)
+
     
     windows = []
     timestamps = []
