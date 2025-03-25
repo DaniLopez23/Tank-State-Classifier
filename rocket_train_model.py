@@ -36,7 +36,7 @@ REPORT_DIR = f"data_per_{DATA_STRATEGY}_strategy/reports"
 ROCKET_KERNELS = {
     "second": 10000,
     "minute": 10000,
-    "5_second": 5000
+    "5_second": 10000
 }
 
 # Configuración de LightGBM
@@ -76,8 +76,8 @@ LGBM_PARAMS = {
     "5_second": {
         "objective": "multiclass",
         "metric": "multi_logloss",
-        "n_estimators": 600,
-        "learning_rate": 0.05,
+        "n_estimators": 1000,
+        "learning_rate": 0.02,
         "num_leaves": 128,
         "max_depth": 5,
         "min_data_in_leaf": 20,
