@@ -13,11 +13,18 @@ from collections import Counter
 from sklearn.model_selection import TimeSeriesSplit
 
 # Configuración
-DATA_STRATEGY = "second"   # "second" o "minute"
+DATA_STRATEGY = "5_second"   # "second" o "minute" o "5_second"
 
-WINDOW_SIZE = 1800 if DATA_STRATEGY == "second" else 30   # 30 minutos
-STEP_SIZE = 900 if DATA_STRATEGY == "second" else 15      # 50% de solapamiento
-
+if DATA_STRATEGY == "second":
+    WINDOW_SIZE = 1800
+    STEP_SIZE = 900
+elif DATA_STRATEGY == "minute":
+    WINDOW_SIZE = 30
+    STEP_SIZE = 15
+else:
+    WINDOW_SIZE = 360
+    STEP_SIZE = 180
+    
 DATA_TRAIN_DIR = f"data_per_{DATA_STRATEGY}_strategy/data/train"
 DATA_TEST_DIR = f"data_per_{DATA_STRATEGY}_strategy/data/test"
 DATA_VALID_DIR = f"data_per_{DATA_STRATEGY}_strategy/data/valid"
@@ -28,7 +35,8 @@ REPORT_DIR = f"data_per_{DATA_STRATEGY}_strategy/reports"
 # Configuración de Rocket
 ROCKET_KERNELS = {
     "second": 10000,
-    "minute": 10000
+    "minute": 10000,
+    "5_second": 5000
 }
 
 # Configuración de LightGBM
@@ -52,8 +60,8 @@ LGBM_PARAMS = {
     "minute": {
         "objective": "multiclass",
         "metric": "multi_logloss",
-        "n_estimators": 1000,
-        "learning_rate": 0.1,
+        "n_estimators": 200,
+        "learning_rate": 0.2,
         "num_leaves": 64,
         "max_depth": 7,
         "min_data_in_leaf": 20,
@@ -63,6 +71,22 @@ LGBM_PARAMS = {
         "reg_alpha": 0.05,  
         "reg_lambda": 0.05,
         "n_jobs": -1,
+        "random_state": 42
+    },
+    "5_second": {
+        "objective": "multiclass",
+        "metric": "multi_logloss",
+        "n_estimators": 600,
+        "learning_rate": 0.05,
+        "num_leaves": 128,
+        "max_depth": 5,
+        "min_data_in_leaf": 20,
+        "colsample_bytree": 0.2,  # Reemplaza feature_fraction
+        "subsample": 0.8,         # Reemplaza bagging_fraction
+        "subsample_freq": 10,      # Reemplaza bagging_freq
+        "reg_alpha": 0.05,         # En vez de lambda_l1
+        "reg_lambda": 0.05,        # En vez de lambda_l2
+        "force_col_wise": True,
         "random_state": 42
     }
 }
@@ -231,7 +255,6 @@ joblib.dump({
         'window_size': WINDOW_SIZE,
         'step_size': STEP_SIZE
     },
-    'scaler': StandardScaler(),
     'metrics': {
         'train': {'accuracy': train_acc, 'f1': train_f1},
         'validation': {'accuracy': valid_acc, 'f1': valid_f1},

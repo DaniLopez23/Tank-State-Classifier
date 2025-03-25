@@ -1,9 +1,9 @@
 accel_data/*
 initial_data/*
 temp_data/*
-data_per_minute_stratey/merged_data/*
-data_per_minute_stratey/labeled_data/*
-data_per_second_stratey/merged_data/*
-data_per_second_stratey/labeled_data/*
-
-
+/data_per_minute_strategy/merged_data/*
+/data_per_minute_strategy/labeled_data/*
+/data_per_second_strategy/merged_data/*
+/data_per_second_strategy/labeled_data/*
+/data_per_5_second_strategy/merged_data/*
+/data_per_5_second_strategy/labeled_data/*
