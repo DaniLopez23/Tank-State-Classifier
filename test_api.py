@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime
 
-DATE = "2024-08-23"
+DATE = "2024-08-25"
 DATA_STRATEGY = "5_second"
 
 def main(csv_path):
