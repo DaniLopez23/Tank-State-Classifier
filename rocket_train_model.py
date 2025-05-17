@@ -11,6 +11,7 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 from imblearn.over_sampling import SMOTE
 from collections import Counter
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.linear_model import RidgeClassifierCV
 
 # Configuración
 DATA_STRATEGY = "5_second"   # "second" o "minute" o "5_second"
@@ -39,60 +40,67 @@ ROCKET_KERNELS = {
     "5_second": 10000
 }
 
-# Configuración de LightGBM
-LGBM_PARAMS = {
-    "second": {
-        "objective": "multiclass",
-        "metric": "multi_logloss",
-        "n_estimators": 1000,
-        "learning_rate": 0.1,
-        "num_leaves": 128,
-        "max_depth": 5,
-        "min_data_in_leaf": 20,
-        "colsample_bytree": 0.2,  # Reemplaza feature_fraction
-        "subsample": 0.8,         # Reemplaza bagging_fraction
-        "subsample_freq": 10,      # Reemplaza bagging_freq
-        "reg_alpha": 0.05,         # En vez de lambda_l1
-        "reg_lambda": 0.05,        # En vez de lambda_l2
-        "force_col_wise": True,
-        "random_state": 42
-    },
-    "minute": {
-        "objective": "multiclass",
-        "metric": "multi_logloss",
-        "n_estimators": 200,
-        "learning_rate": 0.2,
-        "num_leaves": 64,
-        "max_depth": 7,
-        "min_data_in_leaf": 20,
-        "feature_fraction": 0.6,
-        "bagging_fraction": 0.7,
-        "bagging_freq": 5,
-        "reg_alpha": 0.05,  
-        "reg_lambda": 0.05,
-        "n_jobs": -1,
-        "random_state": 42
-    },
-    "5_second": {
-        "objective": "multiclass",
-        "metric": "multi_logloss",
-        "n_estimators": 1000,
-        "learning_rate": 0.02,
-        "num_leaves": 128,
-        "max_depth": 5,
-        "min_data_in_leaf": 20,
-        "colsample_bytree": 0.2,  # Reemplaza feature_fraction
-        "subsample": 0.8,         # Reemplaza bagging_fraction
-        "subsample_freq": 10,      # Reemplaza bagging_freq
-        "reg_alpha": 0.05,         # En vez de lambda_l1
-        "reg_lambda": 0.05,        # En vez de lambda_l2
-        "force_col_wise": True,
-        "random_state": 42
-    }
+RIDGE_CONFIG = {
+    "alphas": np.logspace(-3, 3, 10),  # Rango de regularización
+    "class_weight": "balanced",        # Manejo automático de desbalanceo
+    "cv": 3,                           # Cross-validation interno
 }
 
+# Configuración de LightGBM
+# LGBM_PARAMS = {
+#     "second": {
+#         "objective": "multiclass",
+#         "metric": "multi_logloss",
+#         "n_estimators": 1000,
+#         "learning_rate": 0.1,
+#         "num_leaves": 128,
+#         "max_depth": 5,
+#         "min_data_in_leaf": 20,
+#         "colsample_bytree": 0.2,  # Reemplaza feature_fraction
+#         "subsample": 0.8,         # Reemplaza bagging_fraction
+#         "subsample_freq": 10,      # Reemplaza bagging_freq
+#         "reg_alpha": 0.05,         # En vez de lambda_l1
+#         "reg_lambda": 0.05,        # En vez de lambda_l2
+#         "force_col_wise": True,
+#         "random_state": 42
+#     },
+#     "minute": {
+#         "objective": "multiclass",
+#         "metric": "multi_logloss",
+#         "n_estimators": 200,
+#         "learning_rate": 0.2,
+#         "num_leaves": 64,
+#         "max_depth": 7,
+#         "min_data_in_leaf": 20,
+#         "feature_fraction": 0.6,
+#         "bagging_fraction": 0.7,
+#         "bagging_freq": 5,
+#         "reg_alpha": 0.05,  
+#         "reg_lambda": 0.05,
+#         "n_jobs": -1,
+#         "random_state": 42
+#     },
+#     "5_second": {
+#         "objective": "multiclass",
+#         "metric": "multi_logloss",
+#         "n_estimators": 1000,
+#         "learning_rate": 0.02,
+#         "num_leaves": 128,
+#         "max_depth": 5,
+#         "min_data_in_leaf": 20,
+#         "colsample_bytree": 0.2,  # Reemplaza feature_fraction
+#         "subsample": 0.8,         # Reemplaza bagging_fraction
+#         "subsample_freq": 10,      # Reemplaza bagging_freq
+#         "reg_alpha": 0.05,         # En vez de lambda_l1
+#         "reg_lambda": 0.05,        # En vez de lambda_l2
+#         "force_col_wise": True,
+#         "random_state": 42
+#     }
+# }
+
+
 NUM_KERNELS = ROCKET_KERNELS[DATA_STRATEGY]
-LGBM_CONFIG = LGBM_PARAMS[DATA_STRATEGY]
+# LGBM_CONFIG = LGBM_PARAMS[DATA_STRATEGY]
 
 def load_and_preprocess_data(folder_path):
     """Carga y preprocesa todos los CSVs en un directorio"""
@@ -152,7 +160,6 @@ def apply_smote(X, y, window_size):
 def evaluate_model(model, X, y, label_encoder, split_type="Train"):
     """Evaluación avanzada con múltricas adicionales"""
     y_pred = model.predict(X)
-    y_proba = model.predict_proba(X)
     
     print(f"\n{split_type} Classification Report:")
     print(classification_report(y, y_pred, target_names=label_encoder.classes_))
@@ -174,15 +181,14 @@ def evaluate_model(model, X, y, label_encoder, split_type="Train"):
 
 def train_model(X_train, y_train, X_valid, y_valid):
     """Entrenamiento con validación temprana"""
-    model = LGBMClassifier(**LGBM_CONFIG)
+    model = RidgeClassifierCV(**RIDGE_CONFIG)
     
     model.fit(
         X_train, 
         y_train,
-        eval_set=[(X_valid, y_valid)],
-        eval_metric="multi_logloss",
-        callbacks=[early_stopping(stopping_rounds=50, verbose=1)]
     )
+    
+    print(f"\nMejor alpha seleccionado: {model.alpha_:.4f}")
     
     return model
 
@@ -224,7 +230,7 @@ X_train_resampled, y_train_resampled = apply_smote(X_train_transformed, y_train_
 
 # Entrenar modelo final
 print("\n" + "="*50)
-print("Entrenando clasificador LightGBM...")
+print("Entrenando clasificador Ridge...")
 classifier = train_model(X_train_resampled, y_train_resampled, X_valid_transformed, y_valid_windows)
 
 # Evaluación completa

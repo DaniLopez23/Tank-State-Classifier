@@ -120,4 +120,4 @@ def process_input(data: pd.DataFrame):
     return np.array(scaled_windows)
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)

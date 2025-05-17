@@ -2,7 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-DATE = "2024-08-17"
+DATE = "2024-08-24"
 
 # Definir rutas de los archivos
 TEMP_FILE = f"../temp_data/temp_data_{DATE}.csv"
@@ -89,7 +89,7 @@ def plot_data(merged_file):
     ax2.legend(lines2, labels2, loc='upper right')
     
     # Título del gráfico
-    plt.title("Datos IMU y Temperatura - Datos del Sensor")
+    plt.title("Datos Acelerómetro (X) y Temperatura")
     
     # Ajustar el layout
     plt.tight_layout()

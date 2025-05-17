@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from datetime import datetime
 
-DATE = "2024-08-25"
+DATE = "2024-08-24"
 DATA_STRATEGY = "5_second"
 
 def main(csv_path):
@@ -25,7 +25,7 @@ def main(csv_path):
     }
     
     # Hacer la petición
-    response = requests.post("http://localhost:8000/predict", json=request_data)
+    response = requests.post("http://localhost:8001/predict", json=request_data)
 
     # Manejar la respuesta
     if response.status_code != 200:
