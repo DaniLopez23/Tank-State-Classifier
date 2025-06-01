@@ -1,16 +1,17 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import numpy as np
 import joblib
 import pandas as pd
 import uvicorn
-from sklearn.preprocessing import StandardScaler
 from datetime import datetime, timedelta
 import logging
+from typing import List
+from sklearn.preprocessing import StandardScaler
 
 DATA_STRATEGY = "5_second"
-MODEL_PATH = f"data_per_{DATA_STRATEGY}_strategy/model/trained_model.pkl"
+MODEL_PATH = f"data_per_{DATA_STRATEGY}_strategy/model/trained_model-new.pkl"
 
 app = FastAPI()
 
@@ -25,14 +26,18 @@ app.add_middleware(
 logger = logging.getLogger("uvicorn")
 
 # Cargar modelo
-model_data = joblib.load(MODEL_PATH)
-rocket = model_data['rocket']
-classifier = model_data['classifier']
-le = model_data['label_encoder']
-window_config = model_data['window_config']
-WINDOW_SIZE = window_config['window_size']
-
-logger.info(f"Model configuration: {window_config}")
+try:
+    model_data = joblib.load(MODEL_PATH)
+    rocket = model_data['rocket']
+    pipeline = model_data['pipeline']
+    le = model_data['label_encoder']
+    window_config = model_data['window_config']
+    WINDOW_SIZE = window_config['window_size']
+    STEP_SIZE = window_config['step_size']
+    logger.info(f"Model loaded successfully. Configuration: {window_config}")
+except Exception as e:
+    logger.error(f"Error loading model: {str(e)}")
+    raise RuntimeError("Failed to load model") from e
 
 class SensorData(BaseModel):
     DateTime: str
@@ -41,83 +46,108 @@ class SensorData(BaseModel):
     SurfaceTemperature: float
 
 class PredictionRequest(BaseModel):
-    data: list[SensorData]
+    data: List[SensorData]
 
 @app.post("/predict")
 async def predict(request: PredictionRequest):
     try:
-        # Crear DataFrame desde los datos de entrada
+        # Crear DataFrame
         df = pd.DataFrame([{
             "DateTime": entry.DateTime,
             "AccelX": entry.AccelX,
             "Over surface temperature (ºC)": entry.OverSurfaceTemperature,
             "Surface temperature (ºC)": entry.SurfaceTemperature
         } for entry in request.data])
-
+        
+        # Validar datos
         if len(df) < WINDOW_SIZE:
-            raise ValueError(f"Se requieren al menos {WINDOW_SIZE} muestras")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Se requieren al menos {WINDOW_SIZE} muestras"
+            )
 
         # Procesar timestamps
         try:
-            timestamps = [datetime.strptime(ts, "%Y-%m-%d %H:%M:%S%z") for ts in df["DateTime"]]
+            df['DateTime'] = pd.to_datetime(df['DateTime'], utc=True)
+            timestamps = df['DateTime'].tolist()
         except Exception as e:
-            raise ValueError(f"Formato DateTime inválido: {str(e)}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Formato DateTime inválido: {str(e)}"
+            )
 
-        # Calcular duración de muestra
-        sample_duration = (timestamps[1] - timestamps[0]).total_seconds() if len(timestamps) > 1 else 5
+        # Crear ventanas
+        windows = create_windows_api(df)
+        
+        # Transformar con Rocket
+        try:
+            X_rocket = rocket.transform(windows)
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error en transformación Rocket: {str(e)}"
+            )
 
-        # Procesar datos
-        windows = process_input(df)
-        X_transformed = rocket.transform(windows)
-        predictions = classifier.predict(X_transformed)
+        # Predecir con pipeline
+        predictions = pipeline.predict(X_rocket)
+        # Calcular decision_function solo si existe
+        if hasattr(pipeline, "decision_function"):
+            decision_scores = pipeline.decision_function(X_rocket)
+            # Si es binario, decision_scores es 1D
+            if len(decision_scores.shape) == 1:
+                confidences = 1 / (1 + np.exp(-decision_scores)) * 100
+            else:
+                confidences = 1 / (1 + np.exp(-np.max(decision_scores, axis=1))) * 100
+        else:
+            confidences = [None] * len(predictions)
 
-        # Generar intervalos por ventana
+        # Generar intervalos
         intervals = []
-        for j in range(len(predictions)):
-            start_idx = j * WINDOW_SIZE
-            end_idx = start_idx + WINDOW_SIZE - 1
-            
-            if end_idx >= len(timestamps):
-                end_idx = len(timestamps) - 1
-
+        for j, (pred, conf) in enumerate(zip(predictions, confidences)):
+            start_idx = j * STEP_SIZE
+            end_idx = start_idx + WINDOW_SIZE
+            if end_idx > len(timestamps):
+                end_idx = len(timestamps)
             start_time = timestamps[start_idx]
-            end_time = timestamps[end_idx] + timedelta(seconds=sample_duration)
-            
+            end_time = timestamps[end_idx - 1] if end_idx <= len(timestamps) else timestamps[-1]
             intervals.append({
-                "inicio": start_time.strftime("%d/%m/%Y %H:%M:%S"),
-                "fin": end_time.strftime("%d/%m/%Y %H:%M:%S"),
-                "estado": le.inverse_transform([predictions[j]])[0]
+                "inicio": start_time.strftime("%Y-%m-%d %H:%M:%S%z"),
+                "fin": end_time.strftime("%Y-%m-%d %H:%M:%S%z"),
+                "estado": le.inverse_transform([pred])[0],
+                "confianza": round(float(conf), 1) if conf is not None else None
             })
 
         return {
             "intervals": intervals,
-            "states": le.classes_.tolist()
+            "metrics": model_data['metrics'],
+            "valid_classes": le.classes_.tolist()
         }
 
+    except HTTPException as he:
+        raise he
     except Exception as e:
-        return {"error": str(e)}
+        logger.error(f"Error en predicción: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno del servidor: {str(e)}"
+        )
 
-def process_input(data: pd.DataFrame):
-    df = data.drop(columns=["DateTime"]).fillna(0)
-    
-    if len(df) < WINDOW_SIZE:
-        raise ValueError(f"Se requieren al menos {WINDOW_SIZE} muestras")
-
-    # Crear ventanas completas sin overlap
-    n_windows = len(df) // WINDOW_SIZE
-    valid_length = n_windows * WINDOW_SIZE
-    df = df.iloc[:valid_length]
-    
-    raw_windows = [df.values[i:i+WINDOW_SIZE] for i in range(0, valid_length, WINDOW_SIZE)]
-    
-    # Escalar cada ventana
-    scaled_windows = []
-    for window in raw_windows:
+def create_windows_api(df: pd.DataFrame):
+    """Replica exactamente el preprocesamiento de entrenamiento"""
+    features = df[["AccelX", "Surface temperature (ºC)", "Over surface temperature (ºC)"]].values
+    n_samples = len(features)
+    windows = []
+    for i in range(0, n_samples, STEP_SIZE):
+        end_idx = i + WINDOW_SIZE
+        if end_idx > n_samples:
+            padding = end_idx - n_samples
+            window = np.pad(features[i:n_samples], ((0, padding), (0, 0)), mode='edge')
+        else:
+            window = features[i:end_idx]
         scaler = StandardScaler()
-        scaled_window = scaler.fit_transform(window)
-        scaled_windows.append(scaled_window.T)
-    
-    return np.array(scaled_windows)
+        window = scaler.fit_transform(window)
+        windows.append(window.T)  # (features, timesteps)
+    return np.array(windows)
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8001)
