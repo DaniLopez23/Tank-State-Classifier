@@ -97,7 +97,7 @@ def graficar_datos_con_etiquetas(labeled_data, intervalos):
     ax1.legend(lines1, labels1, loc='upper left')
     ax2.legend(lines2, labels2, loc='upper right')
     
-    plt.title("Datos IMU, Temperaturas y Etiquetas de Eventos en el Tiempo")
+    plt.title("Datos Acelerómetro (X), Temperatura y Etiquetas de Estados")
     plt.tight_layout()
     plt.show()
 

@@ -90,7 +90,7 @@ def load_and_preprocess_data(folder_path):
     
     return features.values, labels.values, full_df
 
-def create_windows_smart(features, labels, window_size, step):
+def create_windows(features, labels, window_size, step):
     """Ventanas con mejor estrategia de etiquetado para reducir confusión"""
     X, y = [], []
     n_samples = len(features)
@@ -201,7 +201,7 @@ y_train_encoded = le.fit_transform(y_train_raw)
 
 # Crear ventanas de entrenamiento
 print("Creando ventanas de entrenamiento...")
-X_train_windows, y_train_windows = create_windows_smart(X_train_raw, y_train_encoded, WINDOW_SIZE, STEP_SIZE)
+X_train_windows, y_train_windows = create_windows(X_train_raw, y_train_encoded, WINDOW_SIZE, STEP_SIZE)
 
 # Crear ventanas de validación
 print("\n" + "="*50)
@@ -209,7 +209,7 @@ print("CARGANDO DATOS DE VALIDACIÓN")
 print("="*50)
 X_valid_raw, y_valid_raw, _ = load_and_preprocess_data(DATA_VALID_DIR)
 y_valid_encoded = le.transform(y_valid_raw)
-X_valid_windows, y_valid_windows = create_windows_smart(X_valid_raw, y_valid_encoded, WINDOW_SIZE, STEP_SIZE)
+X_valid_windows, y_valid_windows = create_windows(X_valid_raw, y_valid_encoded, WINDOW_SIZE, STEP_SIZE)
 
 # Entrenar ROCKET
 print("\n" + "="*50)
@@ -261,7 +261,7 @@ if os.path.exists(DATA_TEST_DIR) and os.listdir(DATA_TEST_DIR):
         print("="*50)
         X_test_raw, y_test_raw, _ = load_and_preprocess_data(DATA_TEST_DIR)
         y_test_encoded = le.transform(y_test_raw)
-        X_test_windows, y_test_windows = create_windows_smart(X_test_raw, y_test_encoded, WINDOW_SIZE, STEP_SIZE)
+        X_test_windows, y_test_windows = create_windows(X_test_raw, y_test_encoded, WINDOW_SIZE, STEP_SIZE)
         X_test_transformed = rocket.transform(X_test_windows)
         test_metrics = evaluate_model(classifier, X_test_transformed, y_test_windows, le, "Test")
     except Exception as e:
